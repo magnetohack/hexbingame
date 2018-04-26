@@ -20,8 +20,10 @@
 #define SW1  BIT5
 #define SW2  BIT4
 #define SW3  BIT3	// MSB
+//#define MASK (SW0+SW1+SW2+SW3)
 
-#define MASK SW0+SW1+SW2+SW3
+// Piezo speaker
+#define BEEP BIT2
 
 // Declare functions
 void delay(unsigned int);
@@ -30,6 +32,7 @@ void shiftout(unsigned char);
 void pinwrite(unsigned int, unsigned char);
 void display(unsigned char);
 void cleardisplay(void);
+void mybeep(unsigned int);
 
 /*
        0x80
@@ -42,14 +45,15 @@ void cleardisplay(void);
 */
 
 
-//unsigned char digits[16] = {B01111110, B00001010, B10110110, B10011110, B11001010, B11011100, B11111100, B00001110, B11111110, B11011110};
-//unsigned char digits[16] = {0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01, 0xFB, 0x60, 0xEB, 0x00, 0x00, 0x00, 0x00, 0x00};
+//unsigned char digits[16] = {B11111100, B00001010, B10110110, B10011110, B11001010, B11011100, B11111100, B00001110, B11111110, B11011110};
 //                           0     1     2     3     4     5     6     7     8     9     A     b     C     d     E     F
 unsigned char digits[16] = {0xFC, 0x60, 0xDA, 0xF2, 0x66, 0xB6, 0xBE, 0xE0, 0xFE, 0xE6, 0xEF, 0x3F, 0x9D, 0x7B, 0x9F, 0x8F};
 //                           0     1     2     3     4     5     6     7     8     9     a     b     c     d     e     f
 //unsigned char digits[16] = {0xFC, 0x60, 0xDA, 0xF2, 0x66, 0xB6, 0xBE, 0xE0, 0xFE, 0xE6, 0xFB, 0x3F, 0x1B, 0x7B, 0xDF, 0x8F};
 
 unsigned char cycle6[6] = {0x10, 0x08, 0x04, 0x80, 0x40, 0x20};
+
+const int MASK = SW0+SW1+SW2+SW3;
 
 int main(void)
 {
@@ -58,59 +62,40 @@ int main(void)
 
 	WDTCTL = WDTPW + WDTHOLD; 	// Stop watchdog timer
 
-	P1DIR |= (CLK + DATA); 		// Set clock and data pins to output direction 
+	P1DIR |= (CLK + DATA + BEEP); 		// Set clock, data and beep pins to output direction 
 
-	//P1DIR &= ~(SW0 + SW1 + SW2 + SW3);  // Set as inputs (anyway done by default)
-	//P1DIR &= ~MASK;  // Set as inputs (anyway done by default)
-	P1DIR &= ~SW0;  // Set as inputs (anyway done by default)
-	P1DIR &= ~SW1;  // Set as inputs (anyway done by default)
-	P1DIR &= ~SW2;  // Set as inputs (anyway done by default)
-	P1DIR &= ~SW3;  // Set as inputs (anyway done by default)
+	P1DIR &= ~MASK;  // Set switches as inputs
+	P1REN |= MASK;	 // Enable resistor pull
+	P1OUT &= ~MASK;  // Select Pulldown resistors 
+	P1IE |= MASK;  	 // interrupt enable
 
-//	P1REN |= MASK;	//Enable resistor pull
-	P1REN |= SW0;	//Enable resistor pull
-	P1REN |= SW1;	//Enable resistor pull
-	P1REN |= SW2;	//Enable resistor pull
-	P1REN |= SW3;	//Enable resistor pull
-	//P1OUT |= SW0; //Select Pullup resistor for P1.3
-//	P1OUT &= ~MASK; //Select Pulldown resistor for P1.3
-	P1OUT &= ~SW0;
-	P1OUT &= ~SW1;
-	P1OUT &= ~SW2;
-	P1OUT &= ~SW3;
-
-	//P1IE |= MASK; 	// interrupt enable
-	P1IE |= SW0; 	// interrupt enable
-	P1IE |= SW1; 	// interrupt enable
-	P1IE |= SW2; 	// interrupt enable
-	P1IE |= SW3; 	// interrupt enable
 	// Set which edge for the interrupt to trigger on, depending on current state of the switches
-//	P1IES |= (P1IN & MASK);  // 1:High -> Low edge, 0:Low->High edge
-	if(P1IN & SW0) P1IES |= SW0; else P1IES &= ~SW0; 
-	if(P1IN & SW1) P1IES |= SW1; else P1IES &= ~SW1; 
-	if(P1IN & SW2) P1IES |= SW2; else P1IES &= ~SW2; 
-	if(P1IN & SW3) P1IES |= SW3; else P1IES &= ~SW3; 
+        P1IES = (P1IES & ~MASK) | (P1IN & MASK);
 
 
-	//P1IFG &= ~MASK; 	// clear IFG for our switches
-	P1IFG &= ~SW0; 	// clear IFG for our switches
-	P1IFG &= ~SW1; 	// clear IFG for our switches
-	P1IFG &= ~SW2; 	// clear IFG for our switches
-	P1IFG &= ~SW3; 	// clear IFG for our switches
-	__enable_interrupt(); 	// enable all interrupts
-
+	// Light-show during startup
 	shiftout((unsigned char)0x00);
 	delay(50);
 	// Cycle display leds
-	for(j=0; j<12; j++) {
+	for(j=0; j<24; j++) {
 		shiftout(cycle6[j%6]);
 		delay(50);
 	}
 	shiftout((unsigned char)0x00);
 	delay(50);
+
+
+
+
 	// Read switches at startup to determine working mode
 	mode=((P1IN & SW0)?1:0)*1 + ((P1IN & SW1)?1:0)*2 + ((P1IN & SW2)?1:0)*4 + ((P1IN & SW3)?1:0)*8;
 	display(mode);
+
+	if(mode==2)
+		mybeep(500);
+
+	P1IFG &= ~MASK; 	// clear IFG for our switches
+	__enable_interrupt(); 	// enable all interrupts
 
 	// Select mode of operation
 	// 1 -  Game
@@ -131,23 +116,25 @@ __interrupt void Port_1(void)
 // keep reading the input for while?
 delay(5);
 
+// Here we could check the game mode and take different actions
+//...
 display( ((P1IN & SW0)?1:0)*1 + ((P1IN & SW1)?1:0)*2 + ((P1IN & SW2)?1:0)*4 + ((P1IN & SW3)?1:0)*8 );
-
-//P1IFG &= ~MASK; 	// clear IFG 
-P1IFG &= ~SW0; 	// clear IFG 
-P1IFG &= ~SW1; 	// clear IFG 
-P1IFG &= ~SW2; 	// clear IFG 
-P1IFG &= ~SW3; 	// clear IFG 
-
-// update interrupt edge
-if(P1IN & SW0) P1IES |= SW0; else P1IES &= ~SW0; 
-if(P1IN & SW1) P1IES |= SW1; else P1IES &= ~SW1; 
-if(P1IN & SW2) P1IES |= SW2; else P1IES &= ~SW2; 
-if(P1IN & SW3) P1IES |= SW3; else P1IES &= ~SW3; 
-
-//P1IES ^= (P1IN & MASK); // toggle the interrupt edge,
+P1IFG &= ~MASK; 			 // clear IFG 
+P1IES = (P1IES & ~MASK) | (P1IN & MASK); // update interrupt edge
 }
 
+
+void mybeep(unsigned int duration)
+{
+	unsigned int i;
+
+	for(i=0; i<duration; i++){
+		P1OUT |= BEEP;
+		delay(5);
+		P1OUT ^= BEEP;
+		delay(5);
+	}
+}
 
 void display(unsigned char num)
 {
