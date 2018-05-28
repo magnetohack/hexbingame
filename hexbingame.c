@@ -33,6 +33,16 @@ void pinwrite(unsigned int, unsigned char);
 void display(unsigned char);
 void cleardisplay(void);
 void mybeep(unsigned int);
+void cycle(unsigned int, unsigned int);
+void check_state_and_update_edge(void);	// used as part of the switch interrupt handler
+					// but could also be called from timer interrupt to ensure consistent state
+					// in case of failed debounce, etc.
+
+
+// Next thing to implement is timer interrupts
+// Configure one for playing tones - can we actually play music?? No, requires data in memory...
+// Configure one for checking button state consistencyy.
+// Configure one as timer for the game - count down.
 
 /*
        0x80
@@ -52,13 +62,13 @@ unsigned char digits[16] = {0xFC, 0x60, 0xDA, 0xF2, 0x66, 0xB6, 0xBE, 0xE0, 0xFE
 //unsigned char digits[16] = {0xFC, 0x60, 0xDA, 0xF2, 0x66, 0xB6, 0xBE, 0xE0, 0xFE, 0xE6, 0xFB, 0x3F, 0x1B, 0x7B, 0xDF, 0x8F};
 
 unsigned char cycle6[6] = {0x10, 0x08, 0x04, 0x80, 0x40, 0x20};
-
 const int MASK = SW0+SW1+SW2+SW3;
+unsigned char GMODE;
+unsigned char BINVAL;
 
 int main(void)
 {
-	unsigned char j;
-	unsigned char mode;
+//	unsigned char mode;
 
 	WDTCTL = WDTPW + WDTHOLD; 	// Stop watchdog timer
 
@@ -72,27 +82,22 @@ int main(void)
 	// Set which edge for the interrupt to trigger on, depending on current state of the switches
         P1IES = (P1IES & ~MASK) | (P1IN & MASK);
 
-
 	// Light-show during startup
-	shiftout((unsigned char)0x00);
-	delay(50);
-	// Cycle display leds
-	for(j=0; j<24; j++) {
-		shiftout(cycle6[j%6]);
-		delay(50);
-	}
-	shiftout((unsigned char)0x00);
-	delay(50);
-
-
-
+	cycle(3, 50);
 
 	// Read switches at startup to determine working mode
-	mode=((P1IN & SW0)?1:0)*1 + ((P1IN & SW1)?1:0)*2 + ((P1IN & SW2)?1:0)*4 + ((P1IN & SW3)?1:0)*8;
-	display(mode);
+	BINVAL=((P1IN & SW0)?1:0)*1 + ((P1IN & SW1)?1:0)*2 + ((P1IN & SW2)?1:0)*4 + ((P1IN & SW3)?1:0)*8;
+	display(BINVAL);
+	GMODE=BINVAL;
 
-	if(mode==2)
-		mybeep(500);
+	if(GMODE==1) {
+		// set some flags to control behaviour of switch interrupt and timer interrupt routines
+	}
+	else if(GMODE==2){
+		mybeep(200);
+	}
+
+//	__disable_interrupt();  
 
 	P1IFG &= ~MASK; 	// clear IFG for our switches
 	__enable_interrupt(); 	// enable all interrupts
@@ -111,16 +116,35 @@ int main(void)
 #pragma vector=PORT1_VECTOR
 __interrupt void Port_1(void)
 {
-//P1OUT ^= (CLK + DATA); // P1.0 = toggle
-// Debounce?
-// keep reading the input for while?
-delay(5);
+	// Debounce
+	delay(5);
 
-// Here we could check the game mode and take different actions
-//...
-display( ((P1IN & SW0)?1:0)*1 + ((P1IN & SW1)?1:0)*2 + ((P1IN & SW2)?1:0)*4 + ((P1IN & SW3)?1:0)*8 );
-P1IFG &= ~MASK; 			 // clear IFG 
-P1IES = (P1IES & ~MASK) | (P1IN & MASK); // update interrupt edge
+	check_state_and_update_edge();
+	P1IFG &= ~MASK; 			 // clear IFG 
+}
+
+
+void check_state_and_update_edge(void)
+{
+	// Read state of switches and convert bits to number
+	BINVAL=((P1IN & SW0)?1:0)*1 + ((P1IN & SW1)?1:0)*2 + ((P1IN & SW2)?1:0)*4 + ((P1IN & SW3)?1:0)*8;
+
+	// Here we check the game mode and take different actions
+	switch(GMODE) {
+		case 1:
+			display(BINVAL);
+			mybeep(2); // should instead signal that we want to beep
+				// and let a timer interrupt handle it.
+				// i.e. beep (toggle the ouput pin at desired interval)
+				// until enough time has elapsed.
+			break;
+	   	case 2:
+			break;
+		default:
+			display(BINVAL);
+	}
+
+	P1IES = (P1IES & ~MASK) | (P1IN & MASK); // update interrupt edge
 }
 
 
@@ -130,11 +154,27 @@ void mybeep(unsigned int duration)
 
 	for(i=0; i<duration; i++){
 		P1OUT |= BEEP;
-		delay(5);
+		delay(2);
 		P1OUT ^= BEEP;
-		delay(5);
+		delay(2);
 	}
 }
+
+void cycle(unsigned int ncycles, unsigned int cdelay)
+{
+	int j;
+
+	shiftout((unsigned char)0x00);
+	//delay(50);
+	// Cycle display leds
+	for(j=0; j<6*ncycles; j++) {
+		shiftout(cycle6[j%6]);
+		delay(cdelay);
+	}
+	shiftout((unsigned char)0x00);
+	//delay(50);
+}
+
 
 void display(unsigned char num)
 {
